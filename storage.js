@@ -1,5 +1,5 @@
 // Storage module for L'Oréal Routine Builder
-// Manages localStorage for products, chat history, and language preferences
+// Manages localStorage for products and chat history
 
 const Storage = {
   // Save selected products to localStorage
@@ -61,38 +61,6 @@ const Storage = {
       localStorage.removeItem(STORAGE_KEYS.CHAT_HISTORY);
     } catch (error) {
       console.error("Error clearing chat history:", error);
-    }
-  },
-
-  // Save language preference
-  saveLanguagePreference: function (langCode) {
-    try {
-      localStorage.setItem(STORAGE_KEYS.LANGUAGE_PREFERENCE, langCode);
-    } catch (error) {
-      console.error("Error saving language preference:", error);
-    }
-  },
-
-  // Load language preference with fallback to browser language detection
-  loadLanguagePreference: function () {
-    try {
-      // Check if user has saved preference
-      const saved = localStorage.getItem(STORAGE_KEYS.LANGUAGE_PREFERENCE);
-      if (saved && LANGUAGES[saved]) {
-        return LANGUAGES[saved];
-      }
-
-      // Fall back to browser language
-      const browserLang = navigator.language.split("-")[0]; // e.g., 'en' from 'en-US'
-      if (LANGUAGES[browserLang]) {
-        return LANGUAGES[browserLang];
-      }
-
-      // Default to English if browser language not supported
-      return LANGUAGES.en;
-    } catch (error) {
-      console.error("Error loading language preference:", error);
-      return LANGUAGES.en;
     }
   },
 

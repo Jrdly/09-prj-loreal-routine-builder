@@ -11,29 +11,68 @@ let chatHistory = [];
 /* Get references to DOM elements */
 const categoryFilter = document.getElementById("categoryFilter");
 const productSearch = document.getElementById("productSearch");
+const topicHelper = document.getElementById("topicHelper");
+const quickPrompts = document.getElementById("quickPrompts");
 const productsContainer = document.getElementById("productsContainer");
 const chatForm = document.getElementById("chatForm");
 const chatWindow = document.getElementById("chatWindow");
+const userInput = document.getElementById("userInput");
+const sendBtn = document.getElementById("sendBtn");
+const generateRoutineBtn = document.getElementById("generateRoutine");
 
-/* Initialize language and RTL support on page load */
-function initializeLanguage() {
-  // Load language preference (auto-detects browser language if not saved)
-  const language = Storage.loadLanguagePreference();
+/* Keep the original button markup so loading states can be restored */
+const defaultSendButtonHTML = sendBtn.innerHTML;
+const defaultGenerateButtonHTML = generateRoutineBtn.innerHTML;
 
-  // Set dir attribute for RTL languages
-  const htmlElement = document.documentElement;
-  htmlElement.dir = language.rtl ? "rtl" : "ltr";
-  htmlElement.lang = language.code;
+/* Cache products once they are loaded */
+let productsCache = [];
+let productsLoaded = false;
 
-  // Add language class to body for CSS styling
-  document.body.classList.add(`lang-${language.code}`);
-  if (language.rtl) {
-    document.body.classList.add("rtl");
+/* Track the most recent request so the user can retry after a failure */
+let lastRequest = null;
+
+/* Flag to prevent duplicate user messages when retrying a request */
+let isRetrySubmission = false;
+
+/* Apply a direction to the page and chat UI elements */
+function applyDirection(isRtl) {
+  const direction = isRtl ? "rtl" : "ltr";
+
+  document.documentElement.dir = direction;
+  document.body.dir = direction;
+
+  if (chatWindow) {
+    chatWindow.dir = direction;
   }
+  if (chatForm) {
+    chatForm.dir = direction;
+  }
+  if (userInput) {
+    userInput.dir = direction;
+  }
+}
+
+/* Initialize RTL/LTR direction from the browser language */
+function initializeLanguageDirection() {
+  const browserLanguage =
+    (navigator.languages && navigator.languages[0]) ||
+    navigator.language ||
+    "en";
+  const languageCode = browserLanguage.split("-")[0].toLowerCase();
+  const isRtl = /^(ar|he|fa|ur)$/i.test(languageCode);
+
+  document.documentElement.lang = languageCode;
+  applyDirection(isRtl);
+  document.body.classList.toggle("rtl", isRtl);
 
   console.log(
-    `Language initialized: ${language.name} (${language.code}${language.rtl ? ", RTL" : ""})`,
+    `Browser language detected: ${browserLanguage} (${isRtl ? "RTL" : "LTR"})`,
   );
+}
+
+/* Get a friendly label for the current topic */
+function getTopicLabel(category) {
+  return API_CONFIG.CATEGORY_LABELS[category] || "Beauty";
 }
 
 /* Load persisted data from localStorage on page load */
@@ -42,26 +81,65 @@ function restorePersistedData() {
   selectedProducts = Storage.loadSelectedProducts();
   console.log(`Restored ${selectedProducts.length} selected products`);
 
-  // Restore chat history
-  chatHistory = Storage.loadChatHistory();
-  console.log(`Restored ${chatHistory.length} chat messages`);
+  // Reset chat history on each page load
+  chatHistory = [];
+  Storage.clearChatHistory();
+  console.log("Chat history cleared on page load");
+}
+
+/* Update the helper text and quick prompts based on the active topic */
+function refreshTopicUI() {
+  const topicCategory = getTopicCategory();
+  const topicLabel = topicCategory ? getTopicLabel(topicCategory) : "Beauty";
+
+  if (topicHelper) {
+    topicHelper.textContent = topicCategory
+      ? `Quick prompts for ${topicLabel}. Tap one to ask immediately.`
+      : "Pick a category to get quick prompt suggestions.";
+  }
+
+  if (quickPrompts) {
+    const promptList =
+      API_CONFIG.QUICK_PROMPTS[topicCategory] ||
+      API_CONFIG.QUICK_PROMPTS.default;
+
+    quickPrompts.innerHTML = promptList
+      .map(
+        (prompt) => `
+          <button type="button" class="quick-prompt-chip" data-prompt="${prompt.replaceAll('"', "&quot;")}">${prompt}</button>
+        `,
+      )
+      .join("");
+
+    quickPrompts.querySelectorAll(".quick-prompt-chip").forEach((button) => {
+      button.addEventListener("click", () => {
+        const prompt = button.dataset.prompt || "";
+        if (!prompt) {
+          return;
+        }
+
+        userInput.value = prompt;
+        userInput.focus();
+        chatForm.requestSubmit();
+      });
+    });
+  }
 }
 
 /* Run initialization when DOM is ready */
-initializeLanguage();
+initializeLanguageDirection();
 restorePersistedData();
+refreshTopicUI();
 
 // Initialize selected products list
 renderSelectedProductsList();
 
-// Initialize chat (restore conversation history from storage)
+// Initialize chat (start fresh on each page load)
 initializeChat();
 
 // Attach event listeners
 chatForm.addEventListener("submit", handleChatSubmission);
-document
-  .getElementById("generateRoutine")
-  .addEventListener("click", handleGenerateRoutine);
+generateRoutineBtn.addEventListener("click", handleGenerateRoutine);
 
 /* Show initial placeholder until user selects a category */
 productsContainer.innerHTML = `
@@ -72,9 +150,19 @@ productsContainer.innerHTML = `
 
 /* Load product data from JSON file */
 async function loadProducts() {
+  if (productsLoaded && productsCache.length > 0) {
+    return productsCache;
+  }
+
   const response = await fetch("products.json");
+  if (!response.ok) {
+    throw new Error(`Failed to load products: ${response.status}`);
+  }
+
   const data = await response.json();
-  return data.products;
+  productsCache = data.products || [];
+  productsLoaded = true;
+  return productsCache;
 }
 
 /* Check if a product is currently selected */
@@ -100,6 +188,7 @@ function toggleProductSelection(product) {
   // Update visual state
   updateProductCardStates();
   renderSelectedProductsList();
+  refreshTopicUI();
 }
 
 /* Update visual state of product cards based on selection */
@@ -270,6 +359,8 @@ async function applyFilters() {
   } else {
     displayProducts(filteredProducts);
   }
+
+  refreshTopicUI();
 }
 
 /* Debounced filter function */
@@ -291,7 +382,8 @@ function getLanguageForAPI() {
 /* Render a single chat message with proper formatting */
 function renderChatMessage(message, isUser = false) {
   const messageClass = isUser ? "user-message" : "assistant-message";
-  let contentHTML = message.content;
+  let contentHTML = isUser ? escapeHtml(message.content) : message.content;
+  const messageDirection = document.documentElement.dir || "ltr";
 
   // If this is an assistant message with sources, add them at the end
   let sourcesHTML = "";
@@ -312,11 +404,169 @@ function renderChatMessage(message, isUser = false) {
   }
 
   return `
-    <div class="chat-message ${messageClass}">
+    <div class="chat-message ${messageClass}" dir="${messageDirection}">
       <div class="message-content">${contentHTML}</div>
       ${sourcesHTML}
     </div>
   `;
+}
+
+/* Escape plain text before inserting it into the DOM */
+function escapeHtml(text) {
+  return String(text)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+/* Update the chat and generate buttons while a request is running */
+function setLoadingState(isLoading) {
+  sendBtn.disabled = isLoading;
+  generateRoutineBtn.disabled = isLoading;
+  userInput.disabled = isLoading;
+
+  if (isLoading) {
+    sendBtn.innerHTML =
+      '<i class="fa-solid fa-spinner fa-spin"></i><span class="visually-hidden">Loading</span>';
+    generateRoutineBtn.innerHTML =
+      '<i class="fa-solid fa-spinner fa-spin"></i> Generating...';
+  } else {
+    sendBtn.innerHTML = defaultSendButtonHTML;
+    generateRoutineBtn.innerHTML = defaultGenerateButtonHTML;
+  }
+}
+
+/* Show a retryable error message inside the chat */
+function appendRetryMessage(messageText, onRetry) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "chat-message assistant-message error-message";
+  wrapper.innerHTML = `
+    <div class="message-content">${escapeHtml(messageText)}</div>
+    <button type="button" class="retry-btn">Try again</button>
+  `;
+
+  const retryButton = wrapper.querySelector(".retry-btn");
+  retryButton.addEventListener("click", onRetry);
+
+  chatWindow.appendChild(wrapper);
+  if (UI_CONFIG.AUTO_SCROLL_CHAT) {
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+  }
+}
+
+/* Retry the most recent failed request */
+function retryLastRequest() {
+  if (!lastRequest) {
+    return;
+  }
+
+  if (lastRequest.type === "routine") {
+    isRetrySubmission = true;
+    handleGenerateRoutine();
+    return;
+  }
+
+  if (lastRequest.type === "chat") {
+    userInput.value = lastRequest.message;
+    isRetrySubmission = true;
+    chatForm.requestSubmit();
+  }
+}
+
+/* Add a short instruction to keep AI responses concise */
+function getSelectedProductCategory() {
+  const categories = [
+    ...new Set(selectedProducts.map((product) => product.category)),
+  ].filter(Boolean);
+
+  if (categories.length === 1) {
+    return categories[0];
+  }
+
+  return "";
+}
+
+/* Get the current topic category from the filter or selected products */
+function getTopicCategory() {
+  const filterCategory = categoryFilter.value.trim();
+  if (filterCategory) {
+    return filterCategory;
+  }
+
+  return getSelectedProductCategory();
+}
+
+/* Get the current topic category from the filter or selected products */
+function getTopicCategory() {
+  const filterCategory = categoryFilter.value.trim();
+  if (filterCategory) {
+    return filterCategory;
+  }
+
+  return getSelectedProductCategory();
+}
+
+/* Get the prompt that keeps the AI focused on the current category */
+function getTopicPrompt() {
+  const topicCategory = getTopicCategory();
+  return (
+    API_CONFIG.CATEGORY_PROMPTS[topicCategory] ||
+    API_CONFIG.CATEGORY_PROMPTS.default
+  );
+}
+
+/* Build a short prompt that keeps the AI concise and on topic */
+function buildConcisePrompt(userMessage) {
+  const topicPrompt = getTopicPrompt();
+  const selectedProductNames = selectedProducts
+    .map((product) => product.name)
+    .join(", ");
+
+  return [
+    API_CONFIG.SYSTEM_PROMPT,
+    topicPrompt,
+    selectedProductNames ? `Selected products: ${selectedProductNames}` : "",
+    `User request: ${userMessage}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/* Send a request to the Worker and normalize the response */
+async function requestRoutineResponse(userMessage) {
+  const requestBody = {
+    message: buildConcisePrompt(userMessage),
+    conversation_history: chatHistory,
+    selected_products: selectedProducts,
+    language: getLanguageForAPI(),
+    concise_mode: true,
+    system_prompt: API_CONFIG.SYSTEM_PROMPT,
+  };
+
+  const response = await fetch(API_CONFIG.ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    let details = "";
+    try {
+      details = await response.text();
+    } catch (error) {
+      details = response.statusText;
+    }
+
+    throw new Error(
+      `API error: ${response.status} ${response.statusText}${details ? ` - ${details}` : ""}`,
+    );
+  }
+
+  return response.json();
 }
 
 /* Append a chat message to the chat window */
@@ -332,48 +582,13 @@ function appendChatMessage(message, isUser = false) {
 
 /* Load persisted chat history into the UI on page load */
 function loadChatHistoryIntoUI() {
-  if (chatHistory.length === 0) {
-    return; // No chat history to restore
-  }
-
-  chatHistory.forEach((msg) => {
-    appendChatMessage(msg, msg.role === "user");
-  });
-}
-
-/* Call OpenAI API through Cloudflare Worker */
-async function callOpenAIAPI(userMessage) {
-  try {
-    const requestBody = {
-      message: userMessage,
-      conversation_history: chatHistory,
-      selected_products: selectedProducts,
-      language: getLanguageForAPI(),
-    };
-
-    const response = await fetch(API_CONFIG.ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    return data; // Expected: { content: "...", sources: [...] }
-  } catch (error) {
-    console.error("API call failed:", error);
-    throw error;
-  }
+  chatWindow.innerHTML = "";
 }
 
 /* Handle Generate Routine button click */
 async function handleGenerateRoutine() {
   if (selectedProducts.length === 0) {
+    isRetrySubmission = false;
     alert("Please select at least one product before generating a routine.");
     return;
   }
@@ -384,17 +599,22 @@ async function handleGenerateRoutine() {
     .join(", ");
   const initialMessage = `Please create a personalized skincare/haircare routine based on these selected products: ${productsList}`;
 
-  // Add user message to chat
-  const userMsg = { role: "user", content: initialMessage };
-  chatHistory.push(userMsg);
-  appendChatMessage(userMsg, true);
+  lastRequest = { type: "routine", message: initialMessage };
+
+  if (!isRetrySubmission) {
+    // Add user message to chat
+    const userMsg = { role: "user", content: initialMessage };
+    chatHistory.push(userMsg);
+    appendChatMessage(userMsg, true);
+  }
 
   // Clear input
-  document.getElementById("userInput").value = "";
+  userInput.value = "";
+  setLoadingState(true);
 
   // Get API response
   try {
-    const response = await callOpenAIAPI(initialMessage);
+    const response = await requestRoutineResponse(initialMessage);
 
     // Add assistant response to chat
     const assistantMsg = {
@@ -409,13 +629,14 @@ async function handleGenerateRoutine() {
     Storage.saveChatHistory(chatHistory);
   } catch (error) {
     // Show error message to user
-    const errorMsg = {
-      role: "assistant",
-      content: `Sorry, I encountered an error: ${error.message}. Please try again.`,
-      sources: [],
-    };
-    chatHistory.push(errorMsg);
-    appendChatMessage(errorMsg, false);
+    console.error("Generate routine error:", error);
+    appendRetryMessage(
+      `Sorry, I couldn't generate the routine. ${error.message}`,
+      retryLastRequest,
+    );
+  } finally {
+    isRetrySubmission = false;
+    setLoadingState(false);
   }
 }
 
@@ -430,21 +651,22 @@ async function handleChatSubmission(e) {
     return; // Don't submit empty messages
   }
 
-  // Add user message to UI and chat history
-  const userMsg = { role: "user", content: userMessage };
-  chatHistory.push(userMsg);
-  appendChatMessage(userMsg, true);
+  lastRequest = { type: "chat", message: userMessage };
+
+  if (!isRetrySubmission) {
+    // Add user message to UI and chat history
+    const userMsg = { role: "user", content: userMessage };
+    chatHistory.push(userMsg);
+    appendChatMessage(userMsg, true);
+  }
 
   // Disable input while waiting for response
-  const sendBtn = document.getElementById("sendBtn");
-  const wasDisabled = sendBtn.disabled;
-  sendBtn.disabled = true;
-  userInput.disabled = true;
   userInput.value = "";
+  setLoadingState(true);
 
   try {
     // Get response from API
-    const response = await callOpenAIAPI(userMessage);
+    const response = await requestRoutineResponse(userMessage);
 
     // Add assistant response to chat
     const assistantMsg = {
@@ -461,17 +683,14 @@ async function handleChatSubmission(e) {
     console.error("Chat submission error:", error);
 
     // Show error message
-    const errorMsg = {
-      role: "assistant",
-      content: `Sorry, I couldn't process your request. Please try again. (Error: ${error.message})`,
-      sources: [],
-    };
-    chatHistory.push(errorMsg);
-    appendChatMessage(errorMsg, false);
+    appendRetryMessage(
+      `Sorry, I couldn't process your request. ${error.message}`,
+      retryLastRequest,
+    );
   } finally {
     // Re-enable input
-    sendBtn.disabled = wasDisabled;
-    userInput.disabled = false;
+    isRetrySubmission = false;
+    setLoadingState(false);
     userInput.focus();
   }
 }

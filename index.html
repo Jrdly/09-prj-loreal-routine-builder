@@ -49,6 +49,16 @@
         </select>
       </div>
 
+      <div class="topic-helper" id="topicHelper" aria-live="polite">
+        Pick a category to get quick prompt suggestions.
+      </div>
+
+      <div
+        class="quick-prompts"
+        id="quickPrompts"
+        aria-label="Quick prompts"
+      ></div>
+
       <!-- Products Grid -->
       <div id="productsContainer" class="products-grid"></div>
 
@@ -64,7 +74,12 @@
       <!------- Chat Area ------->
       <section class="chatbox">
         <h2>Let's Build Your Routine</h2>
-        <div id="chatWindow" class="chat-window"></div>
+        <div
+          id="chatWindow"
+          class="chat-window"
+          aria-live="polite"
+          aria-relevant="additions"
+        ></div>
 
         <form id="chatForm" class="chat-form">
           <label for="userInput" class="visually-hidden">Message</label>
@@ -99,8 +114,6 @@
     <script src="config.js"></script>
     <script src="storage.js"></script>
 
-    <!-- secrets.js can be removed when using Cloudflare Workers for API requests -->
-    <script src="secrets.js"></script>
     <script src="script.js"></script>
   </body>
 </html>
