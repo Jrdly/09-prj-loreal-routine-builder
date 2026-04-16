@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -22,6 +22,16 @@
         <img src="img/loreal-logo.png" alt="L'Oréal Logo" class="logo" />
         <h1 class="site-title">Smart Routine &amp; Product Advisor</h1>
       </header>
+
+      <!-- Product Search -->
+      <div class="search-section">
+        <input
+          id="productSearch"
+          type="text"
+          placeholder="Search products by name, brand, or description..."
+          aria-label="Search products"
+        />
+      </div>
 
       <!-- Category Filter -->
       <div class="search-section">
@@ -84,6 +94,10 @@
         </nav>
       </footer>
     </div>
+
+    <!-- Configuration and storage modules loaded first -->
+    <script src="config.js"></script>
+    <script src="storage.js"></script>
 
     <!-- secrets.js can be removed when using Cloudflare Workers for API requests -->
     <script src="secrets.js"></script>
